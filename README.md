@@ -24,20 +24,18 @@ Accurate detection of the critical heat flux (CHF) in boiling heat transfer is v
 
 ```text
 BubbleSync_GAN/
-├── base_classifier_training/    # CNN base classifier training
-├── Boiling/                     # Domain specific experiments and models
-├── data/                        # Dataset directory (not included)
-├── data_loader.py               # Data loading utilities
-├── model.py                     # Generator and discriminator definitions
-├── solver.py                    # Training logic and loss functions
-├── main.py                      # Main training entry point
-├── train.sh                     # Training script
-├── test.sh                      # Evaluation script
-├── classification_test.py       # Cross domain classification testing
-├── logger.py                    # Logging utilities
-├── get_blobs_properties.py      # Physical feature extraction
-├── firas_seperate_val.py        # Validation data split
-
+  ├── base_classifier_training/    # CNN base classifier training
+  ├── Boiling/                     # Domain specific experiments and models
+  ├── data/                        # Dataset directory (not included)
+  ├── data_loader.py               # Data loading utilities
+  ├── model.py                     # Generator and discriminator definitions
+  ├── solver.py                    # Training logic and loss functions
+  ├── main.py                      # Main training entry point
+  ├── train.sh                     # Training script
+  ├── test.sh                      # Evaluation script
+  ├── classification_test.py       # Cross domain classification testing
+  ├── logger.py                    # Logging utilities
+  ├── get_blobs_properties.py      # Physical feature extraction
 ```
 
 ## Usage
