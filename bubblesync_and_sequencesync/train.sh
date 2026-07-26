@@ -1,0 +1,13 @@
+python3 main.py --mode train --image_size 256 --c_dim 1 \
+                 --image_dir ../data \
+                 --source_domain DS2 --target_domain DS3 \
+                 --direction B2A \
+                 --seed 42 \
+                 --add_blob_count_loss 1 --add_blob_mean_area_loss 1 --add_blob_std_area_loss 1 \
+                 --lambda_count 0.01 --lambda_mean 1e-8 --lambda_std 1e-7 \
+                 --lambda_TD 0.0001 \
+                 --log_dir Boiling/logs \
+                 --model_save_dir Boiling/models \
+                 --sample_dir Boiling/samples \
+                 --result_dir Boiling/results \
+                 --batch_size 8 --num_workers 4 --lambda_id 0.1 --num_iters 200000
