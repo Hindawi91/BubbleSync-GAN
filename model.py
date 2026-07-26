@@ -21,12 +21,12 @@ class ResidualBlock(nn.Module):
 
 class Generator(nn.Module):
     """Generator network."""
-    def __init__(self, conv_dim=64, c_dim=5, repeat_num=6):
+    def __init__(self, conv_dim=64, c_dim=1, repeat_num=6):
         super(Generator, self).__init__()
 
         layers = []
-        # layers.append(nn.Conv2d(3+c_dim, conv_dim, kernel_size=7, stride=1, padding=3, bias=False))
-        layers.append(nn.Conv2d(1+c_dim, conv_dim, kernel_size=7, stride=1, padding=3, bias=False))
+        layers.append(nn.Conv2d(3+c_dim, conv_dim, kernel_size=7, stride=1, padding=3, bias=False))
+        # layers.append(nn.Conv2d(1+c_dim, conv_dim, kernel_size=7, stride=1, padding=3, bias=False))
         layers.append(nn.InstanceNorm2d(conv_dim, affine=True, track_running_stats=True))
         layers.append(nn.ReLU(inplace=True))
 
@@ -49,8 +49,8 @@ class Generator(nn.Module):
             layers.append(nn.ReLU(inplace=True))
             curr_dim = curr_dim // 2
 
-        layers.append(nn.Conv2d(curr_dim, 1, kernel_size=7, stride=1, padding=3, bias=False))
-        # layers.append(nn.Conv2d(curr_dim, 3, kernel_size=7, stride=1, padding=3, bias=False))
+        # layers.append(nn.Conv2d(curr_dim, 1, kernel_size=7, stride=1, padding=3, bias=False))
+        layers.append(nn.Conv2d(curr_dim, 3, kernel_size=7, stride=1, padding=3, bias=False))
         self.main = nn.Sequential(*layers)
 
     def forward(self, x, c):
@@ -61,13 +61,13 @@ class Generator(nn.Module):
         return self.main(x)
 
 
-class Discriminator(nn.Module):
+class Temporal_Discriminator(nn.Module):
     """Discriminator network with PatchGAN."""
-    def __init__(self, image_size=128, conv_dim=64, c_dim=5, repeat_num=6):
-        super(Discriminator, self).__init__()
+    def __init__(self, image_size=128, conv_dim=64, c_dim=1, repeat_num=6):
+        super(Temporal_Discriminator, self).__init__()
         layers = []
-        layers.append(nn.Conv2d(1, conv_dim, kernel_size=4, stride=2, padding=1))
-        # layers.append(nn.Conv2d(3, conv_dim, kernel_size=4, stride=2, padding=1))
+        # layers.append(nn.Conv2d(1, conv_dim, kernel_size=4, stride=2, padding=1))
+        layers.append(nn.Conv2d(3, conv_dim, kernel_size=4, stride=2, padding=1))
         layers.append(nn.LeakyReLU(0.01))
 
         curr_dim = conv_dim
@@ -80,16 +80,18 @@ class Discriminator(nn.Module):
         self.main = nn.Sequential(*layers)
         self.conv1 = nn.Conv2d(curr_dim, 1, kernel_size=3, stride=1, padding=1, bias=False)
         self.conv2 = nn.Conv2d(curr_dim, c_dim, kernel_size=3, bias=False) #nn.Conv2d(curr_dim, c_dim, kernel_size=kernel_size, bias=False) #kernel size =3 
+        self.conv3 = nn.Conv2d(curr_dim, 2, kernel_size=kernel_size, bias=False)
         
     def forward(self, x):
         h = self.main(x)
         out_src = self.conv1(h)
         out_cls = self.conv2(h)
         out_cls = torch.mean(out_cls, dim=(2,3))
-        #maybe just average here out_cls = torch.mean(out_cls) maybe u need to dp torch.mean(out_cls,dim =)
-        return out_src, out_cls.view(out_cls.size(0), out_cls.size(1))
+
+        out_cls_TD = self.conv3(h)
+
+        return out_src, out_cls.view(out_cls.size(0), out_cls.size(1)), out_cls_TD.view(out_cls_TD.size(0), out_cls_TD.size(1))
         
-        #make sure the dimensions are correct
+
+
         
-        # 16x3x128x128
-        # 16x1x2x2 or 16x2x2 ... I need to only average the 2x2

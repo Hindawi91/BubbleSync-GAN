@@ -5,6 +5,7 @@ Through Intelligent Physical Features Extraction"**_
 
 ![BubbleSync_Github](https://github.com/user-attachments/assets/4b74fc83-1068-465c-9bec-82bba9902579)
 
+> **Note:** this repository implements BubbleSync-GAN's physical-feature-consistency (blob-based) contribution only. A follow-up work, **SequenceSync-GAN**, extends this approach with a temporal-sequence-consistency contribution (a sequence-aware data loader, a temporal discriminator, and a temporal-consistency loss). See that paper/repository for the combined approach.
 
 ## Paper
 
@@ -35,7 +36,9 @@ BubbleSync_GAN/
   ├── test.sh                      # Evaluation script
   ├── classification_test.py       # Cross domain classification testing
   ├── logger.py                    # Logging utilities
-  ├── get_blobs_properties.py      # Physical feature extraction
+  ├── get_blobs_properties.py      # Physical feature extraction (reference implementation)
+  ├── get_blobs_properties_differentiable.py  # Differentiable blob-loss gradient path (see below)
+  ├── verify_blob_gradient.py      # Standalone script demonstrating the gradient-flow bug/fix
 ```
 
 ## Usage
@@ -43,7 +46,7 @@ BubbleSync_GAN/
 ### Clone Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/BubbleSync-GAN.git
+git clone https://github.com/Hindawi91/BubbleSync-GAN.git
 cd BubbleSync-GAN
 ```
 
@@ -53,8 +56,13 @@ cd BubbleSync-GAN
 <ol type="1">
   <li>Download our <a href="https://www.dropbox.com/scl/fi/0iqury0rhq7v81bu2rmpe/data.rar?rlkey=2a35eenysxl0uq20ou0wea5b5&dl=0" > data </a> to replace the current data folder</li>
   <li>Download our <a href="https://www.dropbox.com/scl/fi/k3oi23tmbu9nrfpezcwxm/base_classifier.rar?rlkey=iobe3kdis949j6xi2e0csn1do&dl=0" > Base Classifier </a> and place it inside the "base_classifier_training/" folder</li>
-  <!-- <li>Download our <a href="https://www.dropbox.com/scl/fi/vyf26trwrx509knfby1pz/models.rar?rlkey=k0qdmrljrek5cpfszvj9osua1&dl=0" > Saved Checkpoint Models </a> and place them inside the "boiling/models/" folder. (best BA model @ 150000, best AUC model @ 90000</li>
-</ol> -->
+  <li>Download our best-performing saved checkpoint models below and place them inside the "Boiling/models/" folder:
+    <ul>
+      <li><a href="#">exp4_cL_mH_sH_seed202, iteration 120000 (best AUC)</a> -- lambda_count=0.01, lambda_mean=1e-8, lambda_std=1e-7, seed=202</li>
+      <li><a href="#">exp4_cL_mH_sH_seed202, iteration 200000 (best Balanced Accuracy)</a> -- same configuration as above</li>
+    </ul>
+  </li>
+</ol>
 
 #### 2. Data Preparation
 
@@ -85,13 +93,15 @@ The folder structure should be as follows:
 │ │ │ ├─ ......
 ```
 
+(Images can also sit in further subfolders under `DomainA`/`DomainB`, e.g. class-specific subdirectories -- the data loader searches recursively.)
+
 #### 3. CNN Base Classifier Training:
 
 <ol type="1">
   <li>Assuming one of the domains you have is labeled</li>
   <li>Go to the base_classifier_training folder</li>
   <li>In the “DS_CNN_Training.py” file, change the “dataset” variable to the source DS directory, then run the Python script.</li>
-  <li>Once training is done, the best model would be saved as “CNN - Base Model.hdf5”</li>
+  <li>Once training is done, the best model would be saved as a “.keras” file (native Keras 3 format).</li>
   <li>In the “test_DS_on_DS.py” file, change the “dataset” variable to the source DS directory, then run the Python script. Then, run the Python script to test the saved model on the source dataset for sanity check.</li>
 </ol>
 
@@ -105,7 +115,7 @@ $ python DS_CNN_Training.py
 Start Training:
 
 ```bash
-$ bash run.sh
+$ bash train.sh
 ```
 
 #### 4. BubbleSync-GAN test Data Translation
@@ -124,6 +134,19 @@ Once image translation is done, you need to test cross domain classification fro
 $ python classification_test.py
 ```
 
+## Fixes since the original implementation
+
+A few correctness issues were found and fixed since this code was first written. If you're comparing results against an earlier checkout of this repo, or auditing the implementation, these are worth knowing about:
+
+- **Blob losses now actually train the Generator.** The original `get_blobs_properties()` computes blob statistics via skimage/NumPy operations, then wraps the result in a fresh `torch.tensor(...)`. That tensor has no `grad_fn` -- it's disconnected from the Generator's computation graph -- so the blob count/mean-area/std-area losses contributed **exactly zero gradient** regardless of `lambda_count`/`lambda_mean`/`lambda_std`. `get_blobs_properties_differentiable.py` fixes this with a straight-through estimator: the forward pass still calls the original `get_blobs_properties()` directly (so reported values are byte-identical, not approximated), while the backward pass routes gradients through a differentiable soft-thresholded proxy mask. `verify_blob_gradient.py` is a small standalone script demonstrating the bug empirically against the original function.
+- **Missing grayscale conversion.** The Generator/Discriminator are built for 1-channel input, but the original `data_loader.py` never converted images to grayscale, silently feeding 3-channel input where 1 was expected.
+- **`create_labels()` call/signature mismatch.** `solver.py`'s `train()` called `create_labels()` with an extra `selected_attrs` argument that both didn't exist as an attribute and wasn't accepted by the function's own signature -- causing a crash before training could start.
+- **`test()` only translated the intended direction.** The original `test()` processed every image in the combined test set and always set the target label to domainA-style, meaning already-domainA images were "translated" to a near-identical copy of themselves -- producing uninformative output alongside the real domainB-to-domainA translations. Fixed to skip domainA samples during testing.
+- **Deprecated TensorFlow/Keras APIs.** `classification_test.py` and `DS_CNN_Training.py` imported from `keras.layers.core`/`keras.layers.convolutional`, which don't exist in modern Keras 3, and used `model.fit_generator()`, removed in TensorFlow >= 2.11. Updated to current equivalents.
+- **`ModelCheckpoint` `.hdf5` saving.** Keras 3 requires checkpoint filepaths to end in `.keras` or `.weights.h5`; `.hdf5` is no longer accepted for saving (loading existing `.hdf5` files still works).
+- **Reproducibility.** Added a `--seed` argument wired through to `torch`, `numpy`, `random`, and `cudnn` deterministic settings.
+- **Removed hardcoded `CUDA_VISIBLE_DEVICES="0"`**, which could conflict with cluster job schedulers (e.g. Slurm) that assign GPUs per-job.
+
 ## Citation
 
 If you use this code, please cite our paper:
@@ -136,11 +159,3 @@ If you use this code, please cite our paper:
   year={2025}
 }
 ```
-
-
-
-
-
-
-
-

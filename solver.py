@@ -8,18 +8,17 @@ import numpy as np
 import os
 import time
 import datetime
+import json
 from sklearn.cluster import KMeans
-from get_blobs_properties import get_blobs_properties
+from get_blobs_properties_differentiable import get_blobs_properties_differentiable
 import torch.nn as nn
 
 
 class Solver(object):
-    """Solver for training and testing"""
+    """Solver for training and testing BubbleSync-GAN."""
 
     def __init__(self, data_loader, config):
         """Initialize configurations."""
-
-        # Data loader.
         self.data_loader = data_loader
 
         # Model configurations.
@@ -35,20 +34,15 @@ class Solver(object):
         self.lambda_gp = config.lambda_gp
         self.lambda_id = config.lambda_id
 
-        ########################################### Blobs Settings #############################
-
-        self.add_blob_count_loss = config.add_blob_count_loss 
+        # Blob loss configuration.
+        self.add_blob_count_loss = config.add_blob_count_loss
         self.add_blob_mean_area_loss = config.add_blob_mean_area_loss
         self.add_blob_std_area_loss = config.add_blob_std_area_loss
-
         self.lambda_count = config.lambda_count
         self.lambda_mean = config.lambda_mean
-        self.lambda_std= config.lambda_std
-
+        self.lambda_std = config.lambda_std
         self.source_domain = config.source_domain
         self.target_domain = config.target_domain
-
-        ########################################################################################
 
         # Training configurations.
         self.dataset = config.dataset
@@ -89,25 +83,16 @@ class Solver(object):
     def build_model(self):
         """Create a generator and a discriminator."""
         self.G = Generator(self.g_conv_dim, self.c_dim, self.g_repeat_num)
-        self.D = Discriminator(self.image_size, self.d_conv_dim, self.c_dim, self.d_repeat_num) 
+        self.D = Discriminator(self.image_size, self.d_conv_dim, self.c_dim, self.d_repeat_num)
+
         self.g_optimizer = torch.optim.Adam(self.G.parameters(), self.g_lr, [self.beta1, self.beta2])
         self.d_optimizer = torch.optim.Adam(self.D.parameters(), self.d_lr, [self.beta1, self.beta2])
+
         self.print_network(self.G, 'G')
         self.print_network(self.D, 'D')
-            
+
         self.G.to(self.device)
         self.D.to(self.device)
-
-    def recreate_image(self, codebook, labels, w, h):
-        """Recreate the (compressed) image from the code book & labels"""
-        d = codebook.shape[1]
-        image = np.zeros((w, h, d))
-        label_idx = 0
-        for i in range(w):
-            for j in range(h):
-                image[i][j] = codebook[labels[label_idx]]
-                label_idx += 1
-        return image
 
     def print_network(self, model, name):
         """Print out the network information."""
@@ -152,12 +137,11 @@ class Solver(object):
         """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2."""
         weight = torch.ones(y.size()).to(self.device)
         dydx = torch.autograd.grad(outputs=y,
-                                   inputs=x,
-                                   grad_outputs=weight,
-                                   retain_graph=True,
-                                   create_graph=True,
-                                   only_inputs=True)[0]
-
+                                    inputs=x,
+                                    grad_outputs=weight,
+                                    retain_graph=True,
+                                    create_graph=True,
+                                    only_inputs=True)[0]
         dydx = dydx.view(dydx.size(0), -1)
         dydx_l2norm = torch.sqrt(torch.sum(dydx**2, dim=1))
         return torch.mean((dydx_l2norm-1)**2)
@@ -171,7 +155,6 @@ class Solver(object):
 
     def create_labels(self, c_org, c_dim=1, dataset='Boiling'):
         """Generate target domain labels for debugging and testing."""
-
         c_trg_list = []
         for i in range(c_dim):
             c_trg = c_org.clone()
@@ -179,49 +162,67 @@ class Solver(object):
             c_trg_list.append(c_trg.to(self.device))
         return c_trg_list
 
-    def classification_loss(self, logit, target, dataset='CelebA'):
+    def classification_loss(self, logit, target, dataset='Boiling'):
         """Compute binary or softmax cross entropy loss."""
-        return F.binary_cross_entropy_with_logits(logit, target, size_average=False) / logit.size(0)
+        return F.binary_cross_entropy_with_logits(logit, target, reduction='sum') / logit.size(0)
 
+    def all_blobs_losses(self, image1, image1_label, image2, image2_label):
+        # Both image1 and image2 can be generator output depending on the
+        # call site (e.g. the reconstruction-loss calls compare two
+        # generator outputs against each other), so both need the
+        # differentiable path for gradients to flow correctly. Using it on a
+        # tensor that doesn't require grad (e.g. a genuine dataset image) is
+        # harmless -- it just won't accumulate a gradient, same as before.
+        #
+        # NOTE: this replaces a call to get_blobs_properties() (plain,
+        # non-differentiable skimage-based computation). That version
+        # computed correct blob statistics, but building the returned
+        # tensor via torch.tensor(python_list) produces a tensor with no
+        # grad_fn -- completely disconnected from the Generator's
+        # computation graph. As a result, the blob count/mean-area/std-area
+        # losses contributed EXACTLY ZERO gradient to the Generator
+        # regardless of their lambda weights, silently making
+        # lambda_count/lambda_mean/lambda_std have no training effect at
+        # all. get_blobs_properties_differentiable() still calls the
+        # original get_blobs_properties() internally for the actual
+        # reported values (so the numbers are identical/exact, not
+        # approximated), but routes gradients through a differentiable
+        # proxy (a smooth soft-thresholded mask) so training is actually
+        # influenced by these losses. See get_blobs_properties_differentiable.py
+        # for the full explanation and a standalone verification script.
+        blob_counts_real, blob_mean_areas_real, blob_std_areas_real = get_blobs_properties_differentiable(
+            images=image1, labels=image1_label, device=self.device,
+            source_domain=self.source_domain, target_domain=self.target_domain)
 
-    def blob_count_loss(self, blob_counts_real, blob_counts_fake):
+        blob_counts_fake, blob_mean_areas_fake, blob_std_areas_fake = get_blobs_properties_differentiable(
+            images=image2, labels=image2_label, device=self.device,
+            source_domain=self.source_domain, target_domain=self.target_domain)
+
         blob_count_loss = nn.MSELoss()(blob_counts_real, blob_counts_fake)
-        return blob_count_loss
-
-    def blob_mean_size_loss(self, blob_mean_areas_real, blob_mean_areas_fake):
         blob_mean_size_loss = nn.MSELoss()(blob_mean_areas_real, blob_mean_areas_fake)
-        return blob_mean_size_loss
-
-    def blob_std_size_loss(self, blob_std_areas_real, blob_std_areas_fake):
         blob_std_size_loss = nn.MSELoss()(blob_std_areas_real, blob_std_areas_fake)
-        return blob_std_size_loss
 
-    def all_blobs_losses(self,image1,image1_label,image2,image2_label):
-
-        blob_counts_real,blob_mean_areas_real,blob_std_areas_real = get_blobs_properties(images=image1,labels=image1_label, device = self.device,
-                                    source_domain = self.source_domain, target_domain= self.target_domain)
-
-        blob_counts_fake,blob_mean_areas_fake,blob_std_areas_fake = get_blobs_properties(images=image2,labels=image2_label, device = self.device,
-                                    source_domain = self.source_domain, target_domain= self.target_domain)
-
-        blob_count_loss = self.blob_count_loss(blob_counts_real, blob_counts_fake)
-        blob_mean_size_loss = self.blob_mean_size_loss(blob_mean_areas_real, blob_mean_areas_fake)
-        blob_std_size_loss = self.blob_std_size_loss(blob_std_areas_real, blob_std_areas_fake)
-
-        return blob_count_loss,blob_mean_size_loss,blob_std_size_loss
-
-
+        return blob_count_loss, blob_mean_size_loss, blob_std_size_loss
 
     def train(self):
         """Train BubbleSync-GAN within a single dataset."""
         # Set data loader.
         data_loader = self.data_loader
 
+        # Per-iteration loss log. Uses JSON Lines (one JSON object per line,
+        # appended) rather than a single growing JSON array: rewriting a
+        # full array every iteration over --num_iters steps would be an
+        # O(n^2) I/O pattern and would meaningfully slow down training.
+        # JSONL is O(1) per write and crash-safe (a partially written file
+        # is still valid up to the last complete line).
+        self.iteration_losses_path = os.path.join(self.log_dir, 'iteration_losses.jsonl')
+        self._iteration_loss_file = open(self.iteration_losses_path, 'a' if self.resume_iters else 'w')
+
         # Fetch fixed inputs for debugging.
         data_iter = iter(data_loader)
         x_fixed, c_org = next(data_iter)
         x_fixed = x_fixed.to(self.device)
-        c_fixed_list = self.create_labels(c_org, self.c_dim, self.dataset, self.selected_attrs)
+        c_fixed_list = self.create_labels(c_org, self.c_dim, self.dataset)
 
         # Learning rate cache for decaying.
         g_lr = self.g_lr
@@ -242,66 +243,58 @@ class Solver(object):
             #                             1. Preprocess input data                                #
             # =================================================================================== #
 
-            # Fetch real images and labels.
             try:
-                x_real, label_org = next(data_iter)
-            except:
+                x_real, label_org, filename = next(data_iter)
+            except StopIteration:
                 data_iter = iter(data_loader)
-                x_real, label_org = next(data_iter)
+                x_real, label_org, filename = next(data_iter)
 
             # Generate target domain labels randomly.
             rand_idx = torch.randperm(label_org.size(0))
             label_trg = label_org[rand_idx]
 
-
             c_org = label_org.clone()
             c_trg = label_trg.clone()
 
-
-            x_real = x_real.to(self.device)           # Input images.
-            c_org = c_org.to(self.device)             # Original domain labels.
-            c_trg = c_trg.to(self.device)             # Target domain labels.
-            label_org = label_org.to(self.device)     # Labels for computing classification loss.
-            label_trg = label_trg.to(self.device)     # Labels for computing classification loss.
+            x_real = x_real.to(self.device)
+            c_org = c_org.to(self.device)
+            c_trg = c_trg.to(self.device)
+            label_org = label_org.to(self.device)
+            label_trg = label_trg.to(self.device)
 
             # =================================================================================== #
             #                             2. Train the discriminator                              #
             # =================================================================================== #
 
-            # Compute loss with real images.
             out_src, out_cls = self.D(x_real)
             d_loss_real = - torch.mean(out_src)
             d_loss_cls = self.classification_loss(out_cls, label_org, self.dataset)
 
-            # Compute loss with fake images.
             delta = self.G(x_real, c_trg)
             x_fake = torch.tanh(x_real + delta)
             out_src, out_cls = self.D(x_fake.detach())
             d_loss_fake = torch.mean(out_src)
 
-            # Compute loss for gradient penalty.
             alpha = torch.rand(x_real.size(0), 1, 1, 1).to(self.device)
             x_hat = (alpha * x_real.data + (1 - alpha) * x_fake.data).requires_grad_(True)
             out_src, _ = self.D(x_hat)
             d_loss_gp = self.gradient_penalty(out_src, x_hat)
 
-            # Backward and optimize.
             d_loss = d_loss_real + d_loss_fake + self.lambda_cls * d_loss_cls + self.lambda_gp * d_loss_gp
             self.reset_grad()
             d_loss.backward()
             self.d_optimizer.step()
 
-            # Logging.
             loss = {}
             loss['D/loss_real'] = d_loss_real.item()
             loss['D/loss_fake'] = d_loss_fake.item()
             loss['D/loss_cls'] = d_loss_cls.item()
             loss['D/loss_gp'] = d_loss_gp.item()
-            
+
             # =================================================================================== #
             #                               3. Train the generator                                #
             # =================================================================================== #
-            
+
             if (i+1) % self.n_critic == 0:
                 # Original-to-target domain.
                 delta = self.G(x_real, c_trg)
@@ -309,24 +302,6 @@ class Solver(object):
                 out_src, out_cls = self.D(x_fake)
                 g_loss_fake = - torch.mean(out_src)
                 g_loss_cls = self.classification_loss(out_cls, label_trg, self.dataset)
-
-                ##################################################### BLOB LOSSES #################################################################
-                blob_count_loss,blob_mean_size_loss,blob_std_size_loss = self.all_blobs_losses(x_real,label_org,x_fake,label_trg)
-                ###################################################################################################################################
-
-                # blob_counts_real,blob_mean_areas_real,blob_std_areas_real = get_blobs_properties(images=x_real,labels=label_org, device = self.device,
-                #                     source_domain = self.source_domain, target_domain= self.target_domain)
-
-                # blob_counts_fake,blob_mean_areas_fake,blob_std_areas_fake = get_blobs_properties(images=x_fake,labels=label_trg, device = self.device, 
-                #                     source_domain = self.source_domain, target_domain= self.target_domain)
-
-
-                # blob_count_loss = self.blob_count_loss(blob_counts_real, blob_counts_fake)
-                # blob_mean_size_loss = self.blob_mean_size_loss(blob_mean_areas_real, blob_mean_areas_fake)
-                # blob_std_size_loss = self.blob_std_size_loss(blob_std_areas_real, blob_std_areas_fake)
-
-                ##################################################### BLOB LOSSES #################################################################
-
 
                 # Original-to-original domain.
                 delta_id = self.G(x_real, c_org)
@@ -336,40 +311,29 @@ class Solver(object):
                 g_loss_cls_id = self.classification_loss(out_cls_id, label_org, self.dataset)
                 g_loss_id = torch.mean(torch.abs(x_real - torch.tanh(delta_id + x_real)))
 
-                ##################################################### BLOB LOSSES #################################################################
-                blob_count_loss_id,blob_mean_size_loss_id,blob_std_size_loss_id = self.all_blobs_losses(x_real,label_org,x_fake_id,label_org)
-                ###################################################################################################################################
-
                 # Target-to-original domain.
                 delta_reconst = self.G(x_fake, c_org)
                 x_reconst = torch.tanh(x_fake + delta_reconst)
                 g_loss_rec = torch.mean(torch.abs(x_real - x_reconst))
-
-                ##################################################### BLOB LOSSES #################################################################
-                blob_count_loss_reconst,blob_mean_size_loss_reconst,blob_std_size_loss_reconst = self.all_blobs_losses(x_fake,label_trg,x_reconst,label_org)
-                ###################################################################################################################################
 
                 # Original-to-original domain.
                 delta_reconst_id = self.G(x_fake_id, c_org)
                 x_reconst_id = torch.tanh(x_fake_id + delta_reconst_id)
                 g_loss_rec_id = torch.mean(torch.abs(x_real - x_reconst_id))
 
-                ##################################################### BLOB LOSSES #################################################################
-                blob_count_loss_reconst_id,blob_mean_size_loss_reconst_id,blob_std_size_loss_reconst_id = self.all_blobs_losses(x_fake_id,label_org,x_reconst_id,label_org)
-                ###################################################################################################################################
-
-                # Backward and optimize.
-
-                  
+                # Blob losses -- see all_blobs_losses() for the differentiability fix.
+                blob_count_loss, blob_mean_size_loss, blob_std_size_loss = self.all_blobs_losses(x_real, label_org, x_fake, label_trg)
+                blob_count_loss_id, blob_mean_size_loss_id, blob_std_size_loss_id = self.all_blobs_losses(x_real, label_org, x_fake_id, label_org)
+                blob_count_loss_reconst, blob_mean_size_loss_reconst, blob_std_size_loss_reconst = self.all_blobs_losses(x_fake, label_trg, x_reconst, label_org)
+                blob_count_loss_reconst_id, blob_mean_size_loss_reconst_id, blob_std_size_loss_reconst_id = self.all_blobs_losses(x_fake_id, label_org, x_reconst_id, label_org)
 
                 blob_count_losses = self.lambda_count * (blob_count_loss + blob_count_loss_id + blob_count_loss_reconst + blob_count_loss_reconst_id)
                 blob_mean_area_losses = self.lambda_mean * (blob_mean_size_loss + blob_mean_size_loss_id + blob_mean_size_loss_reconst + blob_mean_size_loss_reconst_id)
                 blob_std_area_losses = self.lambda_std * (blob_std_size_loss + blob_std_size_loss_id + blob_std_size_loss_reconst + blob_std_size_loss_reconst_id)
 
-                # ONLY INCLUDE SPECIFIED LOSSES based on flags configurations
-                blobs_losses = self.add_blob_count_loss*blob_count_losses + self.add_blob_mean_area_loss*blob_mean_area_losses + self.add_blob_std_area_loss*blob_std_area_losses
+                blobs_losses = self.add_blob_count_loss * blob_count_losses + self.add_blob_mean_area_loss * blob_mean_area_losses + self.add_blob_std_area_loss * blob_std_area_losses
 
-
+                # Backward and optimize.
                 g_loss_same = g_loss_fake_id + self.lambda_rec * g_loss_rec_id + self.lambda_cls * g_loss_cls_id + self.lambda_id * g_loss_id
                 g_loss = g_loss_fake + self.lambda_rec * g_loss_rec + self.lambda_cls * g_loss_cls + g_loss_same + blobs_losses
 
@@ -377,7 +341,6 @@ class Solver(object):
                 g_loss.backward()
                 self.g_optimizer.step()
 
-                # Logging.
                 loss['G/loss_fake'] = g_loss_fake.item()
                 loss['G/loss_rec'] = g_loss_rec.item()
                 loss['G/loss_cls'] = g_loss_cls.item()
@@ -385,36 +348,20 @@ class Solver(object):
                 loss['G/loss_rec_id'] = g_loss_rec_id.item()
                 loss['G/loss_cls_id'] = g_loss_cls_id.item()
                 loss['G/loss_id'] = g_loss_id.item()
-
                 if self.add_blob_count_loss:
                     loss['G/blob_count_losses'] = blob_count_losses.item()
-
-                    # loss['G/blob_count_loss'] = blob_count_loss.item()
-                    # loss['G/blob_count_loss_id'] = blob_count_loss_id.item()
-                    # loss['G/blob_count_loss_reconst'] = blob_count_loss_reconst.item()
-                    # loss['G/blob_count_loss_reconst_id'] = blob_count_loss_reconst_id.item()
-
                 if self.add_blob_mean_area_loss:
-
                     loss['G/blob_mean_area_losses'] = blob_mean_area_losses.item()
-
-                    # loss['G/blob_mean_size_loss'] = blob_mean_size_loss.item()
-                    # loss['G/blob_mean_size_loss_id'] = blob_mean_size_loss_id.item()
-                    # loss['G/blob_mean_size_loss_reconst'] = blob_mean_size_loss_reconst.item()
-                    # loss['G/blob_mean_size_loss_reconst_id'] = blob_mean_size_loss_reconst_id.item()
-
                 if self.add_blob_std_area_loss:
-
                     loss['G/blob_std_area_losses'] = blob_std_area_losses.item()
-
-                    # loss['G/blob_std_size_loss'] = blob_std_size_loss.item()
-                    # loss['G/blob_std_size_loss_id'] = blob_std_size_loss_id.item()
-                    # loss['G/blob_std_size_loss_reconst'] = blob_std_size_loss_reconst.item()
-                    # loss['G/blob_std_size_loss_reconst_id'] = blob_std_size_loss_reconst_id.item()
 
             # =================================================================================== #
             #                                 4. Miscellaneous                                    #
             # =================================================================================== #
+
+            iter_record = {"iteration": i + 1, **loss}
+            self._iteration_loss_file.write(json.dumps(iter_record) + "\n")
+            self._iteration_loss_file.flush()
 
             # Print out training information.
             if (i+1) % self.log_step == 0:
@@ -424,7 +371,6 @@ class Solver(object):
                 for tag, value in loss.items():
                     log += ", {}: {:.4f}".format(tag, value)
                 print(log)
-
                 if self.use_tensorboard:
                     for tag, value in loss.items():
                         self.logger.scalar_summary(tag, value, i+1)
@@ -454,74 +400,47 @@ class Solver(object):
                 g_lr -= (self.g_lr / float(self.num_iters_decay))
                 d_lr -= (self.d_lr / float(self.num_iters_decay))
                 self.update_lr(g_lr, d_lr)
-                print ('Decayed learning rates, g_lr: {}, d_lr: {}.'.format(g_lr, d_lr))
+                print('Decayed learning rates, g_lr: {}, d_lr: {}.'.format(g_lr, d_lr))
 
+        self._iteration_loss_file.close()
 
     def test(self):
         """Translate images using BubbleSync-GAN trained on a single dataset."""
         # Load the trained generator.
         self.restore_model(self.test_iters)
-        
+
         # Set data loader.
-        if self.dataset in ['Boiling']:
-            data_loader = self.data_loader
-        
+        data_loader = self.data_loader
+
         with torch.no_grad():
             for i, (x_real, c_org, filename) in enumerate(data_loader):
+                # Only translate target-domain (domainB, label 1) images
+                # toward domainA-style -- skip source-domain (domainA,
+                # label 0) samples entirely. The original translation
+                # direction (c_trg[:,0]=0 for everyone) was already correct
+                # for domainB samples, but ALSO processed domainA samples,
+                # which produced a near-identity, uninformative translation
+                # (already domainA-style) that just cluttered the output
+                # directory alongside the real translations. Assumes
+                # batch_size=1 for testing, so c_org has one label per batch.
+                if c_org[0, 0].item() == 0:
+                    continue
+
                 x_real = x_real.to(self.device)
 
                 c_trg = c_org.clone()
-                c_trg[:, 0] = 0 #0 # always to healthy      (FIRAS: CHANGE BACK TO 0 TO CANCEL REVERSE TRANSLATION)       
+                c_trg[:, 0] = 0  # always translate toward domainA-style (label 0)
                 c_trg_list = [c_trg.to(self.device)]
 
                 # Translate images.
-                #x_fake_list = [x_real]
                 x_fake_list = []
                 for c_trg in c_trg_list:
                     delta = self.G(x_real, c_trg)
-                    delta_org = torch.abs(torch.tanh(delta + x_real) - x_real) - 1.0
-                    delta_gray = np.mean(delta_org.data.cpu().numpy(), axis=1)
-                    delta_gray_norm = []
-
-                    loc = []
-                    cls_mul = []
-
-                    for indx in range(delta_gray.shape[0]):
-                        temp = delta_gray[indx, :, :] + 1.0  
-                        tempimg_th = np.percentile(temp, 99)
-                        tempimg = np.float32(temp >= tempimg_th)
-                        temploc = np.reshape(tempimg, (self.image_size*self.image_size, 1))
-
-                        kmeans = KMeans(n_clusters=2, random_state=0).fit(temploc)
-                        labels = kmeans.predict(temploc)
-
-                        recreated_loc = self.recreate_image(kmeans.cluster_centers_, labels, self.image_size, self.image_size)
-                        recreated_loc = ((recreated_loc - np.min(recreated_loc)) / (np.max(recreated_loc) - np.min(recreated_loc)))
-
-                        loc.append(recreated_loc)
-                        delta_gray_norm.append( tempimg )
-
-
-                    loc = np.array(loc, dtype=np.float32)[:, :, :, 0]
-                    delta_gray_norm = np.array(delta_gray_norm)
-
-                    loc = (loc * 2.0) - 1.0
-                    delta_gray_norm = (delta_gray_norm * 2.0) - 1.0
-
-                    #x_fake_list.append( torch.from_numpy(np.repeat(delta_gray[:, np.newaxis, :, :], 3, axis=1)).to(self.device) ) # difference map
-                    #x_fake_list.append( torch.from_numpy(np.repeat(delta_gray_norm[:, np.newaxis, :, :], 3, axis=1)).to(self.device) ) # localization thershold
-                    #x_fake_list.append( torch.from_numpy(np.repeat(loc[:, np.newaxis, :, :], 3, axis=1)).to(self.device) ) # localization kmeans
-                    x_fake_list.append( torch.tanh(delta + x_real) ) # generated image
-                    
-                    # generated_image = torch.tanh(delta + x_real)
-                    
-                    # for s,image in enumerate(generated_image):
-                    #     result_path = os.path.join(self.result_dir, f'seperated_image-{s},{i}-{indx}-imagesNEW.jpg')
-                    #     save_image(self.denorm(image.data.cpu()), result_path, nrow=1, padding=0)
+                    x_fake_list.append(torch.tanh(delta + x_real))
 
                 # Save the translated images.
                 x_concat = torch.cat(x_fake_list, dim=3)
-                # result_path = os.path.join(self.result_dir, '{}-images.jpg'.format(i+1))
-                result_path = os.path.join(self.result_dir, '{}'.format(filename[0].split('/')[-1]))
-                save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
-                print('Saved real and fake images into {}...'.format(result_path))
+                for j in range(x_concat.size(0)):
+                    result_path = os.path.join(self.result_dir, '{}'.format(filename[j].split('/')[-1]))
+                    save_image(self.denorm(x_concat[j].data.cpu()), result_path, nrow=1, padding=0)
+                    print('Saved real and fake images into {}...'.format(result_path))

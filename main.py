@@ -1,7 +1,8 @@
 import os
 import argparse
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="0"  # specify which GPU(s) to be used
+import random
+import numpy as np
+import torch
 from solver import Solver
 from data_loader import get_loader
 from torch.backends import cudnn
@@ -10,9 +11,28 @@ from torch.backends import cudnn
 def str2bool(v):
     return v.lower() in ('true')
 
+
+def set_seed(seed):
+    """Seed all RNGs used across the pipeline for reproducible runs."""
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
 def main(config):
-    # For fast training.
-    cudnn.benchmark = True
+    if config.seed is not None:
+        set_seed(config.seed)
+        # cudnn.benchmark picks conv algorithms via runtime autotuning, which
+        # is non-deterministic run-to-run; deterministic=True forces
+        # reproducible ops instead.
+        cudnn.deterministic = True
+        cudnn.benchmark = False
+    else:
+        # For fast training when reproducibility isn't required.
+        cudnn.benchmark = True
 
     # Create directories if not exist.
     if not os.path.exists(config.log_dir):
@@ -25,15 +45,13 @@ def main(config):
         os.makedirs(config.result_dir)
 
     # Data loader.
-    data_loader = None
-
     data_loader = get_loader(config.image_dir, None, None,
-                                   config.crop_size, config.image_size, config.batch_size,
-                                   'Boiling', config.mode, config.num_workers)
-        
-    # Solver for training and testing 
+                              config.crop_size, config.image_size, config.batch_size,
+                              'Boiling', config.mode, config.num_workers,
+                              seed=config.seed)
+
+    # Solver for training and testing
     solver = Solver(data_loader, config)
-    
 
     if config.mode == 'train':
         solver.train()
@@ -60,20 +78,19 @@ if __name__ == '__main__':
 
     ########################################################### BLOBS CONFIGURATIONS ##########################################
 
-    parser.add_argument('--add_blob_count_loss', type=int, default=0, choices=[0,1], help='Flag to include blobs count loss')
-    parser.add_argument('--add_blob_mean_area_loss', type=int, default=0, choices=[0,1], help='Flag to include blobs mean areas loss')
-    parser.add_argument('--add_blob_std_area_loss', type=int, default=0, choices=[0,1], help='Flag to include blobs std areas loss')
+    parser.add_argument('--add_blob_count_loss', type=int, default=0, choices=[0, 1], help='Flag to include blobs count loss')
+    parser.add_argument('--add_blob_mean_area_loss', type=int, default=0, choices=[0, 1], help='Flag to include blobs mean areas loss')
+    parser.add_argument('--add_blob_std_area_loss', type=int, default=0, choices=[0, 1], help='Flag to include blobs std areas loss')
 
     parser.add_argument('--lambda_count', type=float, default=1, help='weight for blobs count loss')
     parser.add_argument('--lambda_mean', type=float, default=0.00000001, help='weight for blobs mean areas loss')
-    parser.add_argument('--lambda_std', type=float, default=0.00000001, help='weight for blobs std areas loss') 
-
+    parser.add_argument('--lambda_std', type=float, default=0.00000001, help='weight for blobs std areas loss')
 
     parser.add_argument('--source_domain', type=str, choices=['DS1', 'DS2', 'DS3'], help='blobs hyperparameter selected based on this')
     parser.add_argument('--target_domain', type=str, choices=['DS1', 'DS2', 'DS3'], help='blobs hyperparameter selected based on this')
 
     ###########################################################################################################################
-    
+
     # Training configuration.
     parser.add_argument('--dataset', type=str, default='Boiling', choices=['Boiling'])
     parser.add_argument('--batch_size', type=int, default=16, help='mini-batch size')
@@ -85,7 +102,6 @@ if __name__ == '__main__':
     parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for Adam optimizer')
     parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for Adam optimizer')
     parser.add_argument('--resume_iters', type=int, default=None, help='resume training from this step')
-    # parser.add_argument('--resume_iters', type=int, default=230000, help='resume training from this step') 
 
     # Test configuration.
     parser.add_argument('--test_iters', type=int, default=200000, help='test model from this step')
@@ -94,6 +110,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_workers', type=int, default=1)
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'])
     parser.add_argument('--use_tensorboard', type=str2bool, default=True)
+    parser.add_argument('--seed', type=int, default=42, help='random seed for reproducibility (pass a negative/omit handling of your own if you want it disabled)')
 
     # Directories.
     parser.add_argument('--image_dir', type=str, default='../data')
