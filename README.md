@@ -3,7 +3,8 @@
 This repository provides the official implementation of our BubbleSync-GAN paper titled:<br/>  _**"BubbleSync-GAN: Preserving Physical Characteristics Consistency in Unsupervised Image-to-Image Translation
 Through Intelligent Physical Features Extraction"**_
 
-![BubbleSync_Github](https://github.com/user-attachments/assets/4b74fc83-1068-465c-9bec-82bba9902579)
+<img width="853" height="480" alt="bubblesync-ganGIF" src="https://github.com/user-attachments/assets/93907294-2ef8-47c1-846c-e6a08d8d908a" />
+
 
 > **Note:** this repository implements BubbleSync-GAN's physical-feature-consistency (blob-based) contribution only. A separate work, **SequenceSync-GAN**, introduces a temporal-sequence-consistency contribution (a sequence-aware data loader, a temporal discriminator, and a temporal-consistency loss) -- see that paper/repository for details. This repo also includes a [`bubblesync_and_sequencesync/`](bubblesync_and_sequencesync/) subfolder with code for combining both contributions, used for some of our combined-loss experiments.
 
@@ -60,7 +61,7 @@ cd BubbleSync-GAN
 #### 2. To replicate our best results for the DS3 &rarr; DS1 experiment:
 
 <ol type="1">
-  <li>Download our <a href="https://www.dropbox.com/scl/fi/2fn3j1knwta6pkorm79f6/CNN-DS3-Binary-Base-Model-epoch-87.keras?rlkey=y2pcl1ynytaz8h05dtuc646jt&st=jjlyfzrz&dl=0" > Base Classifier </a> and place it inside the "base_classifier_training/" folder</li>
+  <li>Download the <a href="https://www.dropbox.com/scl/fi/2fn3j1knwta6pkorm79f6/CNN-DS3-Binary-Base-Model-epoch-87.keras?rlkey=y2pcl1ynytaz8h05dtuc646jt&st=jjlyfzrz&dl=0" > DS3 Base Classifier </a> and place it inside the "base_classifier_training/" folder</li>
   <li>Download the <a href="https://www.dropbox.com/scl/fi/8oc9i84vfcqutcai1fef0/bubblesync_data.rar?rlkey=ng2be3ydai3w4570tpygqc18r&st=x0lm7gus&dl=0">dataset</a> and place it inside the "data/" folder</li>
   <li>Download the <a href="https://www.dropbox.com/scl/fi/gi3ndiizokom1bh7m4v0i/models.rar?rlkey=j310acjwzdhd5es0or2vlifpl&st=2bw44bnf&dl=0">Generator checkpoint models</a> (best AUC @ iteration 120000, best Balanced Accuracy @ iteration 200000, both from experiment `exp4_cL_mH_sH_seed202`: lambda_count=0.01, lambda_mean=1e-8, lambda_std=1e-7, seed=202) and place them inside the "Boiling/models/" folder</li>
   <li>Download the DS3 classifier: <a href="#">coming soon</a></li>
@@ -135,19 +136,6 @@ Once image translation is done, you need to test cross domain classification fro
 ```python
 $ python classification_test.py
 ```
-
-## Fixes since the original implementation
-
-A few correctness issues were found and fixed since this code was first written. If you're comparing results against an earlier checkout of this repo, or auditing the implementation, these are worth knowing about:
-
-- **Blob losses now actually train the Generator.** The original `get_blobs_properties()` computes blob statistics via skimage/NumPy operations, then wraps the result in a fresh `torch.tensor(...)`. That tensor has no `grad_fn` -- it's disconnected from the Generator's computation graph -- so the blob count/mean-area/std-area losses contributed **exactly zero gradient** regardless of `lambda_count`/`lambda_mean`/`lambda_std`. `get_blobs_properties_differentiable.py` fixes this with a straight-through estimator: the forward pass still calls the original `get_blobs_properties()` directly (so reported values are byte-identical, not approximated), while the backward pass routes gradients through a differentiable soft-thresholded proxy mask. `verify_blob_gradient.py` is a small standalone script demonstrating the bug empirically against the original function.
-- **Missing grayscale conversion.** The Generator/Discriminator are built for 1-channel input, but the original `data_loader.py` never converted images to grayscale, silently feeding 3-channel input where 1 was expected.
-- **`create_labels()` call/signature mismatch.** `solver.py`'s `train()` called `create_labels()` with an extra `selected_attrs` argument that both didn't exist as an attribute and wasn't accepted by the function's own signature -- causing a crash before training could start.
-- **`test()` only translated the intended direction.** The original `test()` processed every image in the combined test set and always set the target label to domainA-style, meaning already-domainA images were "translated" to a near-identical copy of themselves -- producing uninformative output alongside the real domainB-to-domainA translations. Fixed to skip domainA samples during testing.
-- **Deprecated TensorFlow/Keras APIs.** `classification_test.py` and `DS_CNN_Training.py` imported from `keras.layers.core`/`keras.layers.convolutional`, which don't exist in modern Keras 3, and used `model.fit_generator()`, removed in TensorFlow >= 2.11. Updated to current equivalents.
-- **`ModelCheckpoint` `.hdf5` saving.** Keras 3 requires checkpoint filepaths to end in `.keras` or `.weights.h5`; `.hdf5` is no longer accepted for saving (loading existing `.hdf5` files still works).
-- **Reproducibility.** Added a `--seed` argument wired through to `torch`, `numpy`, `random`, and `cudnn` deterministic settings.
-- **Removed hardcoded `CUDA_VISIBLE_DEVICES="0"`**, which could conflict with cluster job schedulers (e.g. Slurm) that assign GPUs per-job.
 
 ## Citation
 
