@@ -55,12 +55,12 @@ cd BubbleSync-GAN
 #### 1. Download dataset:
 <ol type="1">
   <li>Download our <a href="https://www.dropbox.com/scl/fi/0iqury0rhq7v81bu2rmpe/data.rar?rlkey=2a35eenysxl0uq20ou0wea5b5&dl=0" > data </a> to replace the current data folder</li>
-  <li>Download our <a href="https://www.dropbox.com/scl/fi/k3oi23tmbu9nrfpezcwxm/base_classifier.rar?rlkey=iobe3kdis949j6xi2e0csn1do&dl=0" > Base Classifier </a> and place it inside the "base_classifier_training/" folder</li>
-</ol>
+  </ol>
 
 #### 2. To replicate our best results for the DS3 &rarr; DS1 experiment:
 
 <ol type="1">
+  <li>Download our <a href="https://www.dropbox.com/scl/fi/2fn3j1knwta6pkorm79f6/CNN-DS3-Binary-Base-Model-epoch-87.keras?rlkey=y2pcl1ynytaz8h05dtuc646jt&st=jjlyfzrz&dl=0" > Base Classifier </a> and place it inside the "base_classifier_training/" folder</li>
   <li>Download the <a href="https://www.dropbox.com/scl/fi/8oc9i84vfcqutcai1fef0/bubblesync_data.rar?rlkey=ng2be3ydai3w4570tpygqc18r&st=x0lm7gus&dl=0">dataset</a> and place it inside the "data/" folder</li>
   <li>Download the <a href="https://www.dropbox.com/scl/fi/gi3ndiizokom1bh7m4v0i/models.rar?rlkey=j310acjwzdhd5es0or2vlifpl&st=2bw44bnf&dl=0">Generator checkpoint models</a> (best AUC @ iteration 120000, best Balanced Accuracy @ iteration 200000, both from experiment `exp4_cL_mH_sH_seed202`: lambda_count=0.01, lambda_mean=1e-8, lambda_std=1e-7, seed=202) and place them inside the "Boiling/models/" folder</li>
   <li>Download the DS3 classifier: <a href="#">coming soon</a></li>
