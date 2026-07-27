@@ -5,7 +5,7 @@ Through Intelligent Physical Features Extraction"**_
 
 ![BubbleSync_Github](https://github.com/user-attachments/assets/4b74fc83-1068-465c-9bec-82bba9902579)
 
-> **Note:** this repository implements BubbleSync-GAN's physical-feature-consistency (blob-based) contribution only. A follow-up work, **SequenceSync-GAN**, extends this approach with a temporal-sequence-consistency contribution (a sequence-aware data loader, a temporal discriminator, and a temporal-consistency loss). See that paper/repository for the combined approach.
+> **Note:** this repository implements BubbleSync-GAN's physical-feature-consistency (blob-based) contribution only. A separate work, **SequenceSync-GAN**, introduces a temporal-sequence-consistency contribution (a sequence-aware data loader, a temporal discriminator, and a temporal-consistency loss) -- see that paper/repository for details. This repo also includes a [`bubblesync_and_sequencesync/`](bubblesync_and_sequencesync/) subfolder with code for combining both contributions, used for some of our combined-loss experiments.
 
 ## Paper
 
@@ -56,15 +56,17 @@ cd BubbleSync-GAN
 <ol type="1">
   <li>Download our <a href="https://www.dropbox.com/scl/fi/0iqury0rhq7v81bu2rmpe/data.rar?rlkey=2a35eenysxl0uq20ou0wea5b5&dl=0" > data </a> to replace the current data folder</li>
   <li>Download our <a href="https://www.dropbox.com/scl/fi/k3oi23tmbu9nrfpezcwxm/base_classifier.rar?rlkey=iobe3kdis949j6xi2e0csn1do&dl=0" > Base Classifier </a> and place it inside the "base_classifier_training/" folder</li>
-  <li>Download our best-performing saved checkpoint models below and place them inside the "Boiling/models/" folder:
-    <ul>
-      <li><a href="#">exp4_cL_mH_sH_seed202, iteration 120000 (best AUC)</a> -- lambda_count=0.01, lambda_mean=1e-8, lambda_std=1e-7, seed=202</li>
-      <li><a href="#">exp4_cL_mH_sH_seed202, iteration 200000 (best Balanced Accuracy)</a> -- same configuration as above</li>
-    </ul>
-  </li>
 </ol>
 
-#### 2. Data Preparation
+#### 2. To replicate our best results for the DS3 &rarr; DS1 experiment:
+
+<ol type="1">
+  <li>Download the <a href="https://www.dropbox.com/scl/fi/8oc9i84vfcqutcai1fef0/bubblesync_data.rar?rlkey=ng2be3ydai3w4570tpygqc18r&st=x0lm7gus&dl=0">dataset</a> and place it inside the "data/" folder</li>
+  <li>Download the <a href="https://www.dropbox.com/scl/fi/gi3ndiizokom1bh7m4v0i/models.rar?rlkey=j310acjwzdhd5es0or2vlifpl&st=2bw44bnf&dl=0">Generator checkpoint models</a> (best AUC @ iteration 120000, best Balanced Accuracy @ iteration 200000, both from experiment `exp4_cL_mH_sH_seed202`: lambda_count=0.01, lambda_mean=1e-8, lambda_std=1e-7, seed=202) and place them inside the "Boiling/models/" folder</li>
+  <li>Download the DS3 classifier: <a href="#">coming soon</a></li>
+</ol>
+
+#### 3. Data Preparation
 
 The folder structure should be as follows:
 
@@ -95,7 +97,7 @@ The folder structure should be as follows:
 
 (Images can also sit in further subfolders under `DomainA`/`DomainB`, e.g. class-specific subdirectories -- the data loader searches recursively.)
 
-#### 3. CNN Base Classifier Training:
+#### 4. CNN Base Classifier Training:
 
 <ol type="1">
   <li>Assuming one of the domains you have is labeled</li>
@@ -110,7 +112,7 @@ $ cd base_classifier_training/
 $ python DS_CNN_Training.py
 ```
 
-#### 4. BubbleSync-GAN Training
+#### 5. BubbleSync-GAN Training
 
 Start Training:
 
@@ -118,7 +120,7 @@ Start Training:
 $ bash train.sh
 ```
 
-#### 4. BubbleSync-GAN test Data Translation
+#### 6. BubbleSync-GAN test Data Translation
 
 Once Training is done, you need to generate results from each checkpoint model saved
 
@@ -126,7 +128,7 @@ Once Training is done, you need to generate results from each checkpoint model s
 $ bash test.sh
 ```
 
-#### 5. BubbleSync-GAN Cross-Domain Classification Testing
+#### 7. BubbleSync-GAN Cross-Domain Classification Testing
 
 Once image translation is done, you need to test cross domain classification from each checkpoint model (Assuming you already have a pre-trained classifier on domain A, other wise go to the CNN Base Classifier Training step below): 
 
