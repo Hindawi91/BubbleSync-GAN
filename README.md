@@ -1,7 +1,6 @@
-# BubbleSync-GAN (Paper Coming Soon)
+# BubbleSync-GAN (Official Implelmentation)
 
-This repository provides the official implementation of our BubbleSync-GAN paper titled:<br/>  _**"BubbleSync-GAN: Preserving Physical Characteristics Consistency in Unsupervised Image-to-Image Translation
-Through Intelligent Physical Features Extraction"**_
+This repository provides the official implementation of our BubbleSync-GAN paper titled:<br/>  _**"Physical descriptors guided image translation for generalizable critical heat flux detection"**_
 
 <img width="853" height="480" alt="bubblesync-ganGIF" src="https://github.com/user-attachments/assets/93907294-2ef8-47c1-846c-e6a08d8d908a" />
 
