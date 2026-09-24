@@ -142,10 +142,13 @@ $ python classification_test.py
 If you use this code, please cite our paper:
 
 ```bibtex
-@article{BubbleSyncGAN,
-  title={BubbleSync-GAN: Preserving Physical Characteristics Consistency in Unsupervised Image-to-Image Translation Through Intelligent Physical Features Extraction},
-  author={Al-Hindawi, Firas and Siddiquee, Md Mahfuzur Rahman and others},
-  journal={To appear},
-  year={2025}
+@article{al2026physical,
+  title={Physical descriptors guided image translation for generalizable critical heat flux detection},
+  author={Al-Hindawi, Firas and Siddiquee, Md Mahfuzur Rahman and Patharkar, Abhidnya and Huang, Jiajing and Wu, Teresa and Hu, Han},
+  journal={Applied Thermal Engineering},
+  volume={304},
+  pages={132614},
+  year={2026},
+  publisher={Elsevier}
 }
 ```
